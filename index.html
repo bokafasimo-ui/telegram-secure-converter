@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<title>صندوق الملفات الآمن</title>
+
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
+<!-- ADSGRAM PLACEHOLDER (head): add the Adsgram SDK <script> tag here, e.g.
+     <script src="https://sad.adsgram.ai/js/sad.min.js"></script>
+     Keep it below the three CDN scripts above so load order stays predictable. -->
+<meta name="color-scheme" content="light dark">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+<style>
+  /* =====================================================================
+     STYLE SHEET CONTENTS
+     1. Theme variables & base
+     2. Security banner
+     3. Tabs
+     4. Panels / cards
+     5. Dropzone (shared by PDF + OCR)
+     6. Thumbnails grid
+     7. Buttons + loading spinner
+     8. Form fields (select)
+     9. Progress bar
+     10. OCR result box
+     11. Toast (success / error)
+     ===================================================================== */
+  :root{
+    /* Telegram theme variables, with safe light-mode fallbacks for standalone preview */
+    --bg:            var(--tg-theme-bg-color, #f4f4f7);
+    --bg-secondary:  var(--tg-theme-secondary-bg-color, #eef0f4);
+    --text:          var(--tg-theme-text-color, #14151a);
+    --hint:          var(--tg-theme-hint-color, #8b8f9a);
+    --link:          var(--tg-theme-link-color, #2f7cf6);
+    --accent:        var(--tg-theme-button-color, #2f7cf6);
+    --accent-text:   var(--tg-theme-button-text-color, #ffffff);
+    --section-bg:    var(--tg-theme-section-bg-color, #ffffff);
+    --header-bg:     var(--tg-theme-header-bg-color, var(--bg));
+
+    --radius-lg: 20px;
+    --radius-md: 14px;
+    --radius-sm: 10px;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Cairo', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    min-height:100vh;
+    padding-top: calc(var(--safe-top) + 12px);
+    padding-bottom: calc(var(--safe-bottom) + 28px);
+    transition: background .25s ease, color .25s ease;
+  }
+
+  .wrap{ max-width:560px; margin:0 auto; padding:0 16px; }
+
+  /* ---------- Security banner ---------- */
+  .shield-banner{
+    position:relative;
+    display:flex;
+    align-items:center;
+    gap:12px;
+    background: var(--bg-secondary);
+    border:1px solid var(--accent);
+    border-radius: var(--radius-lg);
+    padding:14px 16px;
+    margin-bottom:18px;
+    overflow:hidden;
+  }
+  .shield-banner::before{
+    /* Solid-color tint overlay instead of color-mix()/alpha channels,
+       kept compatible with older in-app WebViews (e.g. some Telegram Android builds) */
+    content:"";
+    position:absolute; inset:0;
+    background: var(--accent);
+    opacity:.08;
+    pointer-events:none;
+  }
+  .shield-icon{
+    position:relative;
+    flex:0 0 auto;
+    width:42px; height:42px;
+    border-radius:50%;
+    background:var(--accent);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .shield-icon::before{
+    content:"";
+    position:absolute; inset:-6px;
+    border-radius:50%;
+    background:var(--accent);
+    opacity:.35;
+    animation: pulse-ring 2.6s ease-out infinite;
+  }
+  .shield-icon svg{ position:relative; width:22px; height:22px; }
+  @keyframes pulse-ring{
+    0%   { transform:scale(.8); opacity:.35; }
+    70%  { transform:scale(1.35); opacity:0; }
+    100% { transform:scale(1.35); opacity:0; }
+  }
+  .shield-text b{ display:block; font-size:14.5px; font-weight:700; margin-bottom:2px; }
+  .shield-text span{ display:block; font-size:12.5px; color:var(--hint); line-height:1.5; }
+
+  /* ---------- Tabs ---------- */
+  .tabs{
+    position:relative;
+    display:flex;
+    background:var(--bg-secondary);
+    border-radius: var(--radius-md);
+    padding:4px;
+    margin-bottom:18px;
+  }
+  .tab-indicator{
+    position:absolute;
+    top:4px; bottom:4px;
+    width:calc(50% - 4px);
+    background:var(--section-bg);
+    border-radius: calc(var(--radius-md) - 4px);
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    transition: transform .28s cubic-bezier(.4,0,.2,1);
+    right:4px;
+  }
+  .tab-btn{
+    position:relative;
+    z-index:1;
+    flex:1;
+    border:none;
+    background:transparent;
+    color:var(--hint);
+    font-family:inherit;
+    font-weight:700;
+    font-size:13.5px;
+    padding:10px 6px;
+    display:flex; align-items:center; justify-content:center; gap:6px;
+    border-radius: calc(var(--radius-md) - 4px);
+    cursor:pointer;
+    transition: color .2s ease;
+  }
+  .tab-btn.active{ color:var(--text); }
+  .tab-btn svg{ width:16px; height:16px; flex:0 0 auto; }
+
+  /* ---------- Panels / cards ---------- */
+  .panel{ display:none; }
+  .panel.active{ display:block; animation: fade-up .28s ease; }
+  @keyframes fade-up{ from{ opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;} }
+
+  .card{
+    background:var(--section-bg);
+    border-radius:var(--radius-lg);
+    padding:16px;
+    margin-bottom:14px;
+  }
+  .card h2{ font-size:15px; margin:0 0 4px; }
+  .card p.muted{ font-size:12.5px; color:var(--hint); margin:0 0 14px; line-height:1.6; }
+
+  /* dropzone */
+  .dropzone{
+    border:1.5px dashed var(--hint);
+    opacity:.92;
+    border-radius:var(--radius-md);
+    padding:26px 14px;
+    text-align:center;
+    cursor:pointer;
+    transition: border-color .2s ease, background .2s ease, opacity .2s ease;
+  }
+  .dropzone.drag{ border-color:var(--accent); background: var(--bg-secondary); opacity:1; }
+  .dropzone svg{ width:30px; height:30px; margin-bottom:8px; color:var(--accent); }
+  .dropzone b{ display:block; font-size:13.5px; margin-bottom:2px; }
+  .dropzone span{ font-size:11.5px; color:var(--hint); }
+  input[type=file]{ display:none; }
+
+  /* thumbnails grid */
+  .thumbs{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:8px;
+    margin-top:14px;
+  }
+  .thumb{
+    position:relative;
+    aspect-ratio:1/1;
+    border-radius:var(--radius-sm);
+    overflow:hidden;
+    background:var(--bg-secondary);
+  }
+  .thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .thumb .rm{
+    position:absolute; top:4px; left:4px;
+    width:20px; height:20px;
+    border-radius:50%;
+    background:rgba(0,0,0,.55);
+    color:#fff;
+    border:none;
+    display:flex; align-items:center; justify-content:center;
+    font-size:13px; line-height:1;
+    cursor:pointer;
+  }
+  .thumb .idx{
+    position:absolute; bottom:4px; right:4px;
+    background:rgba(0,0,0,.55); color:#fff;
+    font-size:10px; padding:1px 5px; border-radius:6px;
+  }
+
+  /* buttons */
+  .btn{
+    width:100%;
+    border:none;
+    border-radius:var(--radius-md);
+    padding:13px;
+    font-family:inherit;
+    font-weight:700;
+    font-size:14px;
+    cursor:pointer;
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    transition: opacity .15s ease, transform .1s ease;
+  }
+  .btn:active{ transform:scale(.98); }
+  .btn-primary{ background:var(--accent); color:var(--accent-text); margin-top:14px; }
+  .btn-primary:disabled{ opacity:.5; cursor:not-allowed; }
+  .btn-secondary{ background:var(--bg-secondary); color:var(--text); margin-top:8px; }
+
+  /* Inline loading spinner shown inside a button while it is busy.
+     Colored with --accent-text so it stays visible against the button's
+     own --tg-theme-button-color background in both light and dark themes. */
+  .btn-spinner{
+    display:none;
+    width:16px; height:16px;
+    border-radius:50%;
+    border:2px solid currentColor;
+    border-top-color:transparent;
+    opacity:.9;
+    animation: btn-spin .7s linear infinite;
+  }
+  .btn.is-loading .btn-label{ display:none; }
+  .btn.is-loading .btn-spinner{ display:inline-block; }
+  .btn.is-loading{ cursor:wait; opacity:.9; }
+  @keyframes btn-spin{ to{ transform:rotate(360deg); } }
+
+  select{
+    width:100%;
+    font-family:inherit;
+    font-size:13.5px;
+    font-weight:600;
+    color:var(--text);
+    background-color:var(--bg-secondary);
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b8f9a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat:no-repeat;
+    background-position:left 12px center;
+    background-size:16px;
+    border:none;
+    border-radius:var(--radius-sm);
+    padding:11px 14px 11px 36px;
+    margin-top:12px;
+    appearance:none;
+    -webkit-appearance:none;
+    cursor:pointer;
+  }
+  .field-label{ font-size:12px; font-weight:700; color:var(--hint); margin-top:14px; display:block; }
+
+  /* progress */
+  .progress-wrap{ margin-top:14px; display:none; }
+  .progress-wrap.show{ display:block; }
+  .progress-bar-track{
+    height:8px;
+    border-radius:6px;
+    background:var(--bg-secondary);
+    overflow:hidden;
+  }
+  .progress-bar-fill{
+    height:100%;
+    width:0%;
+    background:var(--accent);
+    border-radius:6px;
+    transition:width .2s ease;
+  }
+  .progress-label{
+    font-size:11.5px;
+    color:var(--hint);
+    margin-top:6px;
+    text-align:center;
+  }
+
+  /* OCR result */
+  textarea#ocrResult{
+    width:100%;
+    min-height:160px;
+    resize:vertical;
+    margin-top:14px;
+    background:var(--bg-secondary);
+    color:var(--text);
+    border:none;
+    border-radius:var(--radius-sm);
+    padding:12px;
+    font-family:inherit;
+    font-size:13.5px;
+    line-height:1.7;
+    display:none;
+  }
+  textarea#ocrResult.show{ display:block; }
+
+  .result-actions{ display:flex; gap:8px; margin-top:8px; display:none; }
+  .result-actions.show{ display:flex; }
+  .result-actions .btn{ margin-top:0; }
+
+  .footnote{
+    text-align:center;
+    font-size:11px;
+    color:var(--hint);
+    margin-top:6px;
+    line-height:1.7;
+  }
+
+  .toast{
+    position:fixed;
+    bottom: calc(var(--safe-bottom) + 18px);
+    left:50%;
+    transform:translateX(-50%) translateY(20px);
+    background:var(--text);
+    color:var(--bg);
+    padding:10px 18px;
+    border-radius:999px;
+    font-size:12.5px;
+    font-weight:700;
+    opacity:0;
+    pointer-events:none;
+    transition: all .25s ease;
+    z-index:50;
+    max-width:88vw;
+    text-align:center;
+    line-height:1.6;
+  }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+  /* Errors get a dedicated, semantically red style — status color, not a
+     theme/brand color, so it stays legible and recognizable in both
+     Telegram's light and dark modes. */
+  .toast.error{ background:#e5484d; color:#ffffff; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Security / encryption banner -->
+  <div class="shield-banner">
+    <div class="shield-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="5" y="11" width="14" height="9" rx="2"></rect>
+        <path d="M8 11V7a4 4 0 0 1 8 0v4"></path>
+      </svg>
+    </div>
+    <div class="shield-text">
+      <b>ملفاتك لا تغادر جهازك 🔒</b>
+      <span>تتم معالجة كل شيء داخل متصفح هاتفك مباشرة — لا رفع، لا تخزين، ولا وصول لأي سيرفر خارجي.</span>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab-indicator" id="tabIndicator"></div>
+    <button class="tab-btn active" id="tabBtnPdf" data-tab="pdf">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"></rect><path d="M8 8h8M8 12h8M8 16h5"></path></svg>
+      صور إلى PDF
+    </button>
+    <button class="tab-btn" id="tabBtnOcr" data-tab="ocr">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
+      استخراج النص
+    </button>
+  </div>
+
+  <!-- PDF PANEL -->
+  <div class="panel active" id="panel-pdf" data-panel="pdf">
+    <div class="card">
+      <h2>تحويل الصور إلى PDF</h2>
+      <p class="muted">اختر صورة واحدة أو أكثر، رتّبها بترتيب الرفع، ثم حوّلها إلى ملف PDF واحد.</p>
+
+      <div class="dropzone" id="pdfDropzone">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M12 4l-4 4M12 4l4 4"></path><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"></path></svg>
+        <b>اضغط لاختيار الصور</b>
+        <span>JPG · PNG · WEBP — يمكن اختيار أكثر من صورة</span>
+      </div>
+      <input type="file" id="pdfInput" accept="image/*" multiple>
+
+      <div class="thumbs" id="pdfThumbs"></div>
+
+      <button class="btn btn-primary" id="pdfConvertBtn" disabled>
+        <span class="btn-label">تحويل إلى PDF</span>
+        <span class="btn-spinner"></span>
+      </button>
+
+      <div class="progress-wrap" id="pdfProgressWrap" aria-hidden="true">
+        <div class="progress-bar-track"><div class="progress-bar-fill" id="pdfProgressFill"></div></div>
+        <div class="progress-label" id="pdfProgressLabel"></div>
+      </div>
+    </div>
+    <p class="footnote">الحد الأقصى الموصى به: 20 صورة في الملف الواحد لضمان أداء سلس.</p>
+  </div>
+
+  <!-- OCR PANEL -->
+  <div class="panel" id="panel-ocr" data-panel="ocr">
+    <div class="card">
+      <h2>استخراج النص من صورة (OCR)</h2>
+      <p class="muted">ارفع صورة تحتوي على نص، وسيقوم التطبيق بقراءته واستخراجه كنص قابل للنسخ.</p>
+
+      <div class="dropzone" id="ocrDropzone">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><path d="M21 15l-5-5L5 21"></path></svg>
+        <b>اضغط لاختيار صورة</b>
+        <span>يدعم JPG · PNG · صور الشاشة</span>
+      </div>
+      <input type="file" id="ocrInput" accept="image/*">
+
+      <div class="thumbs" id="ocrThumbs"></div>
+
+      <label class="field-label">اختر اللغة المكتوبة داخل المستند</label>
+      <select id="ocrLang">
+        <option value="ara" selected>العربية</option>
+        <option value="eng">الإنجليزية</option>
+        <option value="rus">الروسية</option>
+        <option value="fas">الفارسية</option>
+        <option value="spa">الإسبانية</option>
+        <option value="fra">الفرنسية</option>
+        <option value="tur">التركية</option>
+        <option value="chi_sim">الصينية المبسطة</option>
+        <option value="urd">الأوردو</option>
+      </select>
+
+      <button class="btn btn-primary" id="ocrStartBtn" disabled>
+        <span class="btn-label">استخراج النص المشفر</span>
+        <span class="btn-spinner"></span>
+      </button>
+
+      <div class="progress-wrap" id="ocrProgressWrap" aria-hidden="true">
+        <div class="progress-bar-track"><div class="progress-bar-fill" id="ocrProgressFill"></div></div>
+        <div class="progress-label" id="ocrProgressLabel"></div>
+      </div>
+
+      <textarea id="ocrResult" placeholder="سيظهر النص المستخرج هنا…" dir="auto"></textarea>
+      <div class="result-actions" id="ocrResultActions">
+        <button class="btn btn-secondary" id="ocrCopyBtn">نسخ النص</button>
+        <button class="btn btn-secondary" id="ocrDownloadBtn">تنزيل txt.</button>
+      </div>
+    </div>
+    <p class="footnote">الدقة تعتمد على وضوح الصورة وجودة الإضاءة عند التصوير.</p>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* =====================================================================
+     SCRIPT CONTENTS
+     1. Telegram WebApp init (theme sync, haptics)
+     2. Shared UI helpers (toast, progress bar, button spinner)
+     3. Tabs
+     4. PDF tab logic   — isolated in its own try/catch
+     5. OCR tab logic   — isolated in its own try/catch
+     Adsgram code should live in the separate <script> tag further down,
+     not inside this IIFE — see the placeholder comment near </body>.
+     ===================================================================== */
+
+  /* ---------- Telegram init ---------- */
+  var tg = window.Telegram && window.Telegram.WebApp;
+  if (tg) {
+    try {
+      tg.ready();
+      tg.expand();
+      if (tg.setHeaderColor) tg.setHeaderColor('secondary_bg_color');
+      // Keep Telegram's own chrome (header/background) synced if the user
+      // flips light/dark while the mini app is open.
+      if (tg.onEvent) {
+        tg.onEvent('themeChanged', function(){
+          if (tg.setHeaderColor) { try { tg.setHeaderColor('secondary_bg_color'); } catch(e) {} }
+        });
+      }
+    } catch(e) {}
+  }
+
+  function haptic(type){
+    if (tg && tg.HapticFeedback) {
+      try {
+        if (type === 'success' || type === 'error' || type === 'warning') {
+          tg.HapticFeedback.notificationOccurred(type);
+        } else {
+          tg.HapticFeedback.impactOccurred(type || 'light');
+        }
+      } catch(e) {}
+    }
+  }
+
+  /* ---------- Explicit initial UI state ----------
+     Guarantees the progress bars and toast are 100% hidden on load,
+     and only ever appear as a direct result of a user action finishing. */
+  function resetProgress(wrapEl, fillEl, labelEl){
+    wrapEl.classList.remove('show');
+    wrapEl.setAttribute('aria-hidden', 'true');
+    fillEl.style.width = '0%';
+    labelEl.textContent = '';
+  }
+
+  function showProgress(wrapEl){
+    wrapEl.classList.add('show');
+    wrapEl.setAttribute('aria-hidden', 'false');
+  }
+
+  function showToast(msg, isError){
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.toggle('error', !!isError);
+    t.classList.add('show');
+    clearTimeout(t._timer);
+    t._timer = setTimeout(function(){ t.classList.remove('show'); }, isError ? 3200 : 2200);
+  }
+
+  // Toggles a button between its normal label and a spinning loader.
+  // Keeps the button disabled while busy so the action can't double-fire.
+  function setButtonLoading(btn, isLoading){
+    btn.classList.toggle('is-loading', isLoading);
+    btn.disabled = isLoading;
+  }
+
+  /* ---------- Tabs ----------
+     Panels are matched to buttons via data-tab / data-panel attributes
+     rather than hardcoded references, so switching is a single, reliable
+     "hide everything, show the target panel" operation. */
+  var tabButtons = Array.prototype.slice.call(document.querySelectorAll('.tab-btn'));
+  var panels = Array.prototype.slice.call(document.querySelectorAll('.panel'));
+  var indicator = document.getElementById('tabIndicator');
+
+  function setTab(name){
+    tabButtons.forEach(function(btn){
+      btn.classList.toggle('active', btn.getAttribute('data-tab') === name);
+    });
+    panels.forEach(function(panel){
+      var isTarget = panel.getAttribute('data-panel') === name;
+      panel.classList.toggle('active', isTarget);
+    });
+    indicator.style.transform = name === 'pdf' ? 'translateX(0)' : 'translateX(-100%)';
+    haptic('light');
+  }
+
+  tabButtons.forEach(function(btn){
+    btn.addEventListener('click', function(){ setTab(btn.getAttribute('data-tab')); });
+  });
+
+  // Explicitly force the correct starting tab, regardless of markup order.
+  setTab('pdf');
+
+  /* ================= PDF TAB ================= */
+  try {
+  var pdfDropzone = document.getElementById('pdfDropzone');
+  var pdfInput = document.getElementById('pdfInput');
+  var pdfThumbs = document.getElementById('pdfThumbs');
+  var pdfConvertBtn = document.getElementById('pdfConvertBtn');
+  var pdfProgressWrap = document.getElementById('pdfProgressWrap');
+  var pdfProgressFill = document.getElementById('pdfProgressFill');
+  var pdfProgressLabel = document.getElementById('pdfProgressLabel');
+
+  var pdfFiles = []; // array of File
+
+  pdfDropzone.addEventListener('click', function(){ pdfInput.click(); });
+  ['dragover','dragenter'].forEach(function(ev){
+    pdfDropzone.addEventListener(ev, function(e){ e.preventDefault(); pdfDropzone.classList.add('drag'); });
+  });
+  ['dragleave','drop'].forEach(function(ev){
+    pdfDropzone.addEventListener(ev, function(e){ e.preventDefault(); pdfDropzone.classList.remove('drag'); });
+  });
+  pdfDropzone.addEventListener('drop', function(e){
+    var files = Array.prototype.slice.call(e.dataTransfer.files || []);
+    addPdfFiles(files);
+  });
+  pdfInput.addEventListener('change', function(){
+    addPdfFiles(Array.prototype.slice.call(pdfInput.files || []));
+    pdfInput.value = '';
+  });
+
+  function addPdfFiles(files){
+    files = files.filter(function(f){ return f.type.indexOf('image/') === 0; });
+    if (!files.length) return;
+    pdfFiles = pdfFiles.concat(files);
+    renderPdfThumbs();
+    haptic('light');
+  }
+
+  function renderPdfThumbs(){
+    pdfThumbs.innerHTML = '';
+    pdfFiles.forEach(function(file, i){
+      var url = URL.createObjectURL(file);
+      var div = document.createElement('div');
+      div.className = 'thumb';
+      div.innerHTML = '<img src="' + url + '" alt=""><button class="rm" data-i="' + i + '">✕</button><span class="idx">' + (i+1) + '</span>';
+      pdfThumbs.appendChild(div);
+    });
+    pdfConvertBtn.disabled = pdfFiles.length === 0;
+  }
+
+  pdfThumbs.addEventListener('click', function(e){
+    var btn = e.target.closest('.rm');
+    if (!btn) return;
+    var i = parseInt(btn.getAttribute('data-i'), 10);
+    pdfFiles.splice(i, 1);
+    renderPdfThumbs();
+    haptic('light');
+  });
+
+  function readImage(file){
+    return new Promise(function(resolve, reject){
+      var reader = new FileReader();
+      reader.onload = function(){
+        var img = new Image();
+        img.onload = function(){ resolve({ dataUrl: reader.result, width: img.width, height: img.height }); };
+        img.onerror = reject;
+        img.src = reader.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Ensure the progress bar starts fully hidden — only shown once conversion begins.
+  resetProgress(pdfProgressWrap, pdfProgressFill, pdfProgressLabel);
+
+  pdfConvertBtn.addEventListener('click', function(){
+    if (!pdfFiles.length) return;
+    setButtonLoading(pdfConvertBtn, true);
+    showProgress(pdfProgressWrap);
+    pdfProgressFill.style.width = '0%';
+
+    var jsPDF = window.jspdf && window.jspdf.jsPDF;
+    if (!jsPDF) {
+      // The jsPDF library from the CDN didn't load (e.g. offline / blocked network).
+      setButtonLoading(pdfConvertBtn, false);
+      resetProgress(pdfProgressWrap, pdfProgressFill, pdfProgressLabel);
+      showToast('تعذّر تحميل أداة إنشاء PDF، يرجى التأكد من اتصال الإنترنت وإعادة المحاولة', true);
+      haptic('error');
+      return;
+    }
+
+    var doc = null;
+    var total = pdfFiles.length;
+    var done = 0;
+
+    function finish(){
+      try {
+        var blob = doc.output('blob');
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'converted-' + Date.now() + '.pdf';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        pdfProgressLabel.textContent = 'تم إنشاء الملف ✅';
+        setButtonLoading(pdfConvertBtn, false);
+        haptic('success');
+        showToast('تم إنشاء ملف PDF بنجاح');
+      } catch (err) {
+        fail('تعذّر حفظ ملف PDF، يرجى إعادة المحاولة');
+      }
+    }
+
+    function fail(message){
+      resetProgress(pdfProgressWrap, pdfProgressFill, pdfProgressLabel);
+      setButtonLoading(pdfConvertBtn, false);
+      haptic('error');
+      showToast(message || 'عذراً، حدث خطأ أثناء معالجة إحدى الصور، يرجى إعادة المحاولة بصورة أوضح', true);
+    }
+
+    function step(i){
+      if (i >= total) { finish(); return; }
+
+      pdfProgressLabel.textContent = 'معالجة الصورة ' + (i+1) + ' من ' + total;
+      readImage(pdfFiles[i]).then(function(res){
+        try {
+          var mmW = res.width * 25.4 / 96;
+          var mmH = res.height * 25.4 / 96;
+          var orientation = mmW > mmH ? 'l' : 'p';
+          if (!doc) {
+            doc = new jsPDF({ orientation: orientation, unit: 'mm', format: [mmW, mmH] });
+          } else {
+            doc.addPage([mmW, mmH], orientation);
+          }
+          doc.addImage(res.dataUrl, 'JPEG', 0, 0, mmW, mmH, undefined, 'FAST');
+          done++;
+          pdfProgressFill.style.width = Math.round((done/total)*100) + '%';
+          step(i+1);
+        } catch (err) {
+          // A single corrupted/unsupported image shouldn't crash the whole batch;
+          // stop cleanly here and tell the user which step failed.
+          fail('عذراً، الصورة رقم ' + (i+1) + ' تالفة أو غير مدعومة، يرجى إعادة المحاولة بصورة أخرى');
+        }
+      }).catch(function(){
+        // FileReader/Image failed to read this file at all (corrupted upload).
+        fail('عذراً، تعذّرت قراءة الصورة رقم ' + (i+1) + '، يرجى إعادة المحاولة بصورة أكثر وضوحاً');
+      });
+    }
+
+    try {
+      step(0);
+    } catch (err) {
+      fail();
+    }
+  });
+  } catch(pdfErr) { console.error('PDF tab init error:', pdfErr); }
+
+  /* ================= OCR TAB ================= */
+  try {
+  var ocrDropzone = document.getElementById('ocrDropzone');
+  var ocrInput = document.getElementById('ocrInput');
+  var ocrThumbs = document.getElementById('ocrThumbs');
+  var ocrStartBtn = document.getElementById('ocrStartBtn');
+  var ocrLang = document.getElementById('ocrLang');
+  var ocrProgressWrap = document.getElementById('ocrProgressWrap');
+  var ocrProgressFill = document.getElementById('ocrProgressFill');
+  var ocrProgressLabel = document.getElementById('ocrProgressLabel');
+  var ocrResult = document.getElementById('ocrResult');
+  var ocrResultActions = document.getElementById('ocrResultActions');
+  var ocrCopyBtn = document.getElementById('ocrCopyBtn');
+  var ocrDownloadBtn = document.getElementById('ocrDownloadBtn');
+
+  var ocrFile = null;
+
+  // Ensure the progress bar starts fully hidden — only shown once extraction begins.
+  resetProgress(ocrProgressWrap, ocrProgressFill, ocrProgressLabel);
+
+  ocrDropzone.addEventListener('click', function(){ ocrInput.click(); });
+  ['dragover','dragenter'].forEach(function(ev){
+    ocrDropzone.addEventListener(ev, function(e){ e.preventDefault(); ocrDropzone.classList.add('drag'); });
+  });
+  ['dragleave','drop'].forEach(function(ev){
+    ocrDropzone.addEventListener(ev, function(e){ e.preventDefault(); ocrDropzone.classList.remove('drag'); });
+  });
+  ocrDropzone.addEventListener('drop', function(e){
+    var files = Array.prototype.slice.call(e.dataTransfer.files || []);
+    setOcrFile(files[0]);
+  });
+  ocrInput.addEventListener('change', function(){
+    setOcrFile(ocrInput.files && ocrInput.files[0]);
+    ocrInput.value = '';
+  });
+
+  function setOcrFile(file){
+    if (!file || file.type.indexOf('image/') !== 0) return;
+    ocrFile = file;
+    var url = URL.createObjectURL(file);
+    ocrThumbs.innerHTML = '<div class="thumb" style="grid-column:span 1"><img src="' + url + '" alt=""></div>';
+    ocrStartBtn.disabled = false;
+    ocrResult.classList.remove('show');
+    ocrResultActions.classList.remove('show');
+    haptic('light');
+  }
+
+  ocrStartBtn.addEventListener('click', function(){
+    if (!ocrFile) return;
+
+    if (typeof Tesseract === 'undefined') {
+      // The Tesseract.js library from the CDN didn't load (e.g. offline / blocked network).
+      showToast('تعذّر تحميل محرك استخراج النصوص، يرجى التأكد من اتصال الإنترنت وإعادة المحاولة', true);
+      haptic('error');
+      return;
+    }
+
+    setButtonLoading(ocrStartBtn, true);
+    showProgress(ocrProgressWrap);
+    ocrProgressFill.style.width = '0%';
+    ocrProgressLabel.textContent = 'جارِ تحميل محرك التعرف على النصوص…';
+    ocrResult.classList.remove('show');
+    ocrResultActions.classList.remove('show');
+
+    try {
+      Tesseract.recognize(ocrFile, ocrLang.value, {
+        logger: function(m){
+          if (m.status === 'recognizing text') {
+            var pct = Math.round((m.progress || 0) * 100);
+            ocrProgressFill.style.width = pct + '%';
+            ocrProgressLabel.textContent = 'جارِ استخراج النص… ' + pct + '%';
+          } else if (m.status) {
+            ocrProgressLabel.textContent = translateStatus(m.status);
+          }
+        }
+      }).then(function(result){
+        var text = (result.data && result.data.text ? result.data.text.trim() : '');
+        if (!text) {
+          throw new Error('empty-result');
+        }
+        ocrResult.value = text;
+        ocrResult.classList.add('show');
+        ocrResultActions.classList.add('show');
+        ocrProgressLabel.textContent = 'اكتمل الاستخراج ✅';
+        ocrProgressFill.style.width = '100%';
+        setButtonLoading(ocrStartBtn, false);
+        haptic('success');
+        showToast('تم استخراج النص بنجاح');
+      }).catch(function(err){
+        // Covers both Tesseract engine failures (corrupted/unreadable image)
+        // and the "no text found" case above — same friendly message either way.
+        resetProgress(ocrProgressWrap, ocrProgressFill, ocrProgressLabel);
+        setButtonLoading(ocrStartBtn, false);
+        haptic('error');
+        showToast('عذراً، حدث خطأ أثناء قراءة المستند، يرجى إعادة المحاولة بصورة أكثر وضوحاً', true);
+      });
+    } catch (err) {
+      // Synchronous failure calling Tesseract.recognize itself.
+      resetProgress(ocrProgressWrap, ocrProgressFill, ocrProgressLabel);
+      setButtonLoading(ocrStartBtn, false);
+      haptic('error');
+      showToast('عذراً، حدث خطأ أثناء قراءة المستند، يرجى إعادة المحاولة بصورة أكثر وضوحاً', true);
+    }
+  });
+
+  function translateStatus(status){
+    var map = {
+      'loading tesseract core': 'جارِ تحميل المحرك…',
+      'initializing tesseract': 'جارِ التهيئة…',
+      'loading language traineddata': 'جارِ تحميل بيانات اللغة…',
+      'initializing api': 'جارِ التحضير…',
+      'initialized api': 'جاهز، بدء التحليل…'
+    };
+    return map[status] || 'جارِ المعالجة…';
+  }
+
+  ocrCopyBtn.addEventListener('click', function(){
+    ocrResult.select();
+    ocrResult.setSelectionRange(0, 999999);
+    try {
+      document.execCommand('copy');
+      showToast('تم نسخ النص');
+      haptic('light');
+    } catch(e) {
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(ocrResult.value);
+        showToast('تم نسخ النص');
+      }
+    }
+  });
+
+  ocrDownloadBtn.addEventListener('click', function(){
+    var blob = new Blob([ocrResult.value], { type: 'text/plain;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'extracted-text-' + Date.now() + '.txt';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    haptic('light');
+  });
+  } catch(ocrErr) { console.error('OCR tab init error:', ocrErr); }
+
+})();
+</script>
+
+<!-- =====================================================================
+     ADSGRAM PLACEHOLDER (body)
+     Intentionally a separate <script> tag from the main app logic above.
+     The core app IIFE never reads from or writes to anything ad-related,
+     so Adsgram init/show calls can be added here later without touching
+     (or risking breaking) the PDF/OCR code above.
+
+     Typical Adsgram init pattern to drop in when ready:
+       const AdController = window.Adsgram.init({ blockId: "YOUR_BLOCK_ID" });
+       AdController.show().then(result => { ... }).catch(result => { ... });
+     ===================================================================== -->
+<script>
+  // Reserved for Adsgram integration.
+</script>
+
+</body>
+</html>
