@@ -5,9 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
 <title>صندوق الملفات الآمن</title>
 
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
+<script>
+  // Tracks any core library that fails to load from its CDN, so the app can
+  // warn the user immediately instead of only failing later when they tap a button.
+  window.__libLoadErrors = [];
+  function handleCdnError(libName){ window.__libLoadErrors.push(libName); }
+</script>
+<script src="https://telegram.org/js/telegram-web-app.js" onerror="handleCdnError('Telegram WebApp')"></script>
+<!-- jsPDF: served from unpkg (npm's official CDN) instead of cdnjs — more consistently
+     reachable from mobile/in-app WebViews, and unaffected by cdnjs's broken 4.x uploads. -->
+<script src="https://unpkg.com/jspdf@2.5.2/dist/jspdf.umd.min.js" onerror="handleCdnError('jsPDF')"></script>
+<!-- Tesseract.js: official CDN snippet from the project's own README (unpinned to the
+     "5" major line so it always resolves to the latest stable 5.x patch on jsDelivr). -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js" onerror="handleCdnError('Tesseract.js')"></script>
 <!-- ADSGRAM PLACEHOLDER (head): add the Adsgram SDK <script> tag here, e.g.
      <script src="https://sad.adsgram.ai/js/sad.min.js"></script>
      Keep it below the three CDN scripts above so load order stays predictable. -->
@@ -531,6 +541,15 @@
     btn.disabled = isLoading;
   }
 
+  // If a critical library failed to load (see the onerror hooks on the
+  // <script> tags in <head>), tell the user immediately instead of letting
+  // them discover it only after tapping a button and waiting.
+  if (window.__libLoadErrors && window.__libLoadErrors.length) {
+    setTimeout(function(){
+      showToast('تعذّر تحميل بعض مكوّنات التطبيق (' + window.__libLoadErrors.join('، ') + ')، تحقق من اتصال الإنترنت', true);
+    }, 400);
+  }
+
   /* ---------- Tabs ----------
      Panels are matched to buttons via data-tab / data-panel attributes
      rather than hardcoded references, so switching is a single, reliable
@@ -652,26 +671,54 @@
     var total = pdfFiles.length;
     var done = 0;
 
+    // Watchdog: guarantees the button/progress bar can never stay stuck
+    // indefinitely, whatever the underlying cause (slow device, a stalled
+    // network request, a corrupted file that never triggers an event, etc).
+    var watchdog = setTimeout(function(){
+      fail('استغرقت العملية وقتاً طويلاً، يرجى إعادة المحاولة بعدد أقل من الصور');
+    }, 45000);
+
+    function clearWatchdog(){ clearTimeout(watchdog); }
+
     function finish(){
-      try {
-        var blob = doc.output('blob');
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        a.download = 'converted-' + Date.now() + '.pdf';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+      var filename = 'converted-' + Date.now() + '.pdf';
+
+      function onDownloadSuccess(){
+        clearWatchdog();
         pdfProgressLabel.textContent = 'تم إنشاء الملف ✅';
         setButtonLoading(pdfConvertBtn, false);
         haptic('success');
         showToast('تم إنشاء ملف PDF بنجاح');
-      } catch (err) {
-        fail('تعذّر حفظ ملف PDF، يرجى إعادة المحاولة');
+      }
+
+      // Primary method: jsPDF's own doc.save(), the standard/official way
+      // to trigger a download (uses the library's built-in FileSaver).
+      try {
+        doc.save(filename);
+        onDownloadSuccess();
+        return;
+      } catch (primaryErr) {
+        // Fallback for stricter mobile WebViews where doc.save()'s internal
+        // download mechanism can be blocked: build the blob manually and
+        // trigger the download via a plain anchor tag instead.
+        try {
+          var blob = doc.output('blob');
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          onDownloadSuccess();
+        } catch (fallbackErr) {
+          fail('تعذّر حفظ ملف PDF، يرجى إعادة المحاولة');
+        }
       }
     }
 
     function fail(message){
+      clearWatchdog();
       resetProgress(pdfProgressWrap, pdfProgressFill, pdfProgressLabel);
       setButtonLoading(pdfConvertBtn, false);
       haptic('error');
@@ -779,6 +826,17 @@
     ocrResult.classList.remove('show');
     ocrResultActions.classList.remove('show');
 
+    // Watchdog: the OCR language model can be several MB on first use, so this
+    // window is generous — but it guarantees the UI never stays stuck forever
+    // if the download stalls on a slow connection.
+    var ocrWatchdog = setTimeout(function(){
+      resetProgress(ocrProgressWrap, ocrProgressFill, ocrProgressLabel);
+      setButtonLoading(ocrStartBtn, false);
+      haptic('error');
+      showToast('استغرقت العملية وقتاً طويلاً، يرجى التحقق من الاتصال وإعادة المحاولة', true);
+    }, 90000);
+    function clearOcrWatchdog(){ clearTimeout(ocrWatchdog); }
+
     try {
       Tesseract.recognize(ocrFile, ocrLang.value, {
         logger: function(m){
@@ -791,6 +849,7 @@
           }
         }
       }).then(function(result){
+        clearOcrWatchdog();
         var text = (result.data && result.data.text ? result.data.text.trim() : '');
         if (!text) {
           throw new Error('empty-result');
@@ -806,6 +865,7 @@
       }).catch(function(err){
         // Covers both Tesseract engine failures (corrupted/unreadable image)
         // and the "no text found" case above — same friendly message either way.
+        clearOcrWatchdog();
         resetProgress(ocrProgressWrap, ocrProgressFill, ocrProgressLabel);
         setButtonLoading(ocrStartBtn, false);
         haptic('error');
@@ -813,6 +873,7 @@
       });
     } catch (err) {
       // Synchronous failure calling Tesseract.recognize itself.
+      clearOcrWatchdog();
       resetProgress(ocrProgressWrap, ocrProgressFill, ocrProgressLabel);
       setButtonLoading(ocrStartBtn, false);
       haptic('error');
